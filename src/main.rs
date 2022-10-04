@@ -1,16 +1,15 @@
-use std::fs;
-use std::io::{self, Write};
-
-const WORDLIST_FILE_PATH: &str = "./wordlist.txt";
-
 use crossterm::style::Color;
-pub use crossterm::{
+use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent},
     execute, queue, style,
     terminal::{self, ClearType},
-    Command, Result,
+    Result,
 };
+use std::fs;
+use std::io::{self, Write};
+
+const WORDLIST_FILE_PATH: &str = "./wordlist.txt";
 
 fn read_char() -> Result<char> {
     loop {
@@ -40,44 +39,64 @@ fn run<W: Write>(out: &mut W) -> Result<()> {
     execute!(out, style::SetBackgroundColor(Color::Black))?;
 
     let wordlist = get_wordlist()?;
-    let mut chunks = wordlist.chunks(10);
+    let mut chunks = wordlist.chunks(30);
 
     loop {
         let (cols, rows) = terminal::size()?;
+        let (initial_col, initial_row) = (cols / 4, rows / 2 - 1);
         queue!(
             out,
             style::ResetColor,
             terminal::Clear(ClearType::All),
-            cursor::Hide,
-            cursor::MoveTo(cols / 4, rows / 2 - 1)
+            cursor::MoveTo(initial_col, initial_row)
         )?;
 
         let current_chunk = chunks.next();
         if current_chunk.is_none() {
             break;
         }
-        let current_chunk = current_chunk.unwrap();
+        // We're checking if current_chunk is null above, so unwrap is allowed here.
+        let current_chunk = current_chunk.unwrap().join(" ");
 
-        execute!(out, style::Print(current_chunk.join(" ")))?;
-        execute!(out, cursor::Hide, cursor::MoveTo(cols / 4, rows / 2 - 1))?;
+        let lines = textwrap::wrap(current_chunk.as_str(), 50)
+            .iter_mut()
+            .map(|line| format!("{}{}", line, ' '))
+            .collect::<Vec<String>>();
 
-        for chr in current_chunk.join(" ").chars() {
-            if let Ok(input_char) = read_char() {
-                let mut col = Color::Grey;
-                if input_char == chr {
-                    col = Color::Green;
-                } else if input_char != chr {
-                    col = Color::Red;
+        for (line_idx, line) in lines.iter().enumerate() {
+            execute!(
+                out,
+                cursor::MoveTo(initial_col, initial_row + (line_idx as u16))
+            )?;
+            execute!(out, style::Print(&line))?;
+        }
+
+        for (line_idx, line) in lines.iter().enumerate() {
+            execute!(
+                out,
+                cursor::MoveTo(initial_col, initial_row + (line_idx as u16))
+            )?;
+
+            for chr in line.chars() {
+                if let Ok(input_char) = read_char() {
+                    let mut col = Color::Green;
+                    if input_char != chr {
+                        col = Color::Red;
+                    }
+
+                    execute!(out, style::SetForegroundColor(col), style::Print(chr))?;
                 }
-
-                queue!(out, style::SetForegroundColor(col), style::Print(chr))?;
-                out.flush()?;
             }
         }
     }
 
-    execute!(out, terminal::LeaveAlternateScreen, cursor::Show).unwrap();
-    terminal::disable_raw_mode().unwrap();
+    execute!(
+        out,
+        style::ResetColor,
+        terminal::Clear(ClearType::All),
+        terminal::LeaveAlternateScreen,
+    )?;
+    terminal::disable_raw_mode()?;
 
     Ok(())
 }
