@@ -1,159 +1,154 @@
-#![deny(clippy::all)]
-#![deny(clippy::pedantic)]
+mod input;
+mod prompt;
+mod stats;
+mod ui;
 
-use crossterm::queue;
-use crossterm::style::Color;
+use crate::stats::Stats;
 use crossterm::{
     cursor,
-    event::{self, Event, KeyCode, KeyEvent},
-    execute, style,
-    terminal::{self, ClearType},
-    Result,
+    event::{poll, read, Event, KeyCode, KeyEvent},
+    execute, queue, terminal,
 };
-use rand::seq::SliceRandom;
-use rand::thread_rng;
-use std::fs;
-use std::io::{self, Write};
-use std::string::ToString;
-use std::time::{Duration, Instant};
+use input::Input;
+use prompt::Prompt;
+use stats::EntryType;
+use std::io::{stdout, Write};
+use std::time::Duration;
 
-const WORDLIST_FILE_PATH: &str = "./wordlist.txt";
-
-const TICK_RATE: Duration = Duration::from_millis(500);
-
-fn get_wordlist() -> Result<Vec<String>> {
-    let chars = fs::read_to_string(WORDLIST_FILE_PATH)?
-        .split('\n')
-        .map(ToString::to_string)
-        .collect();
-
-    Ok(chars)
+struct App {
+    dimenions: (u16, u16),
+    stats: Stats,
+    prompt: Prompt,
+    input_buffer: Vec<Input>,
+    last_event: Option<Event>,
 }
 
-// fn on_tick() -> Result<()> {
-//     Ok(())
-// }
+impl App {
+    pub fn new() -> anyhow::Result<Self> {
+        let (width, height) = terminal::size()?;
 
-fn draw_ui<W: Write>(out: &mut W, current_chunk: &String, input_buffer: &str) -> Result<()> {
-    let (cols, rows) = terminal::size()?;
-    let (initial_col, initial_row) = (cols / 4, rows / 2 - 1);
+        let stats = Stats::default();
+        let mut prompt = Prompt::default();
+        prompt.next_lines();
 
-    execute!(
-        out,
-        terminal::Clear(ClearType::All),
-        cursor::MoveTo(initial_col, initial_row),
-        style::ResetColor,
-        style::Print(current_chunk),
-        cursor::MoveTo(initial_col, initial_row),
-    )?;
+        let input_buffer = Vec::new();
 
-    let chunks_chars = current_chunk.chars().collect::<Vec<char>>();
-
-    for (char_index, character) in input_buffer.chars().enumerate() {
-        let mut char_color = Color::Green;
-
-        let char_index_u16: u16 = {
-            let idx = u16::try_from(char_index).ok();
-            idx.unwrap_or_default()
+        let app = App {
+            dimenions: (width, height),
+            stats,
+            prompt,
+            input_buffer,
+            last_event: None,
         };
-
-        if character != chunks_chars[char_index as usize] {
-            char_color = Color::Red;
-        }
-
-        queue!(
-            out,
-            cursor::MoveTo(initial_col + char_index_u16, initial_row),
-            style::SetForegroundColor(char_color),
-            style::Print(chunks_chars[char_index as usize]),
-        )?;
+        Ok(app)
     }
 
-    out.flush()?;
+    pub fn update(&mut self, event: Event) {
+        match event {
+            Event::Resize(width, height) => {
+                self.dimenions.0 = width;
+                self.dimenions.1 = height;
+            }
+            Event::Key(KeyEvent { code, .. }) => {
+                if let KeyCode::Char(c) = code {
+                    let input = Input::new(c);
+                    self.input_buffer.push(input);
 
-    Ok(())
+                    if let Some(Event::Key(KeyEvent { code, .. })) = self.last_event {
+                        match code {
+                            KeyCode::Char(_) => {
+                                self.stats.entries.push(EntryType::Entry);
+                                if !self.prompt.input_correct(&self.input_buffer) {
+                                    self.stats.entries.push(EntryType::Mistake)
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                self.stats.entries.push(EntryType::CorrectedMistake)
+                            }
+                            _ => (),
+                        }
+                    }
+                } else if let KeyCode::Backspace = code {
+                    self.input_buffer.pop();
+                }
+            }
+            _ => (),
+        };
+
+        self.last_event = Some(event.clone());
+    }
+
+    pub fn view<T: Write>(&mut self, out: &mut T) -> anyhow::Result<()> {
+        let (width, height) = terminal::size()?;
+        self.prompt.section.x = width / 2 - self.prompt.len() as u16 / 2;
+        self.prompt.section.y = height / 2;
+
+        self.stats.draw(out)?;
+        self.prompt.draw(out, &self.input_buffer)?;
+
+        Ok(())
+    }
 }
 
-fn setup<W: Write>(out: &mut W) -> Result<()> {
-    execute!(out, terminal::EnterAlternateScreen)?;
+impl Drop for App {
+    fn drop(&mut self) {}
+}
+
+fn run() -> anyhow::Result<()> {
+    let mut stdout = stdout();
     terminal::enable_raw_mode()?;
 
-    execute!(out, style::SetBackgroundColor(Color::Black))?;
-
-    Ok(())
-}
-
-fn clean_up<W: Write>(out: &mut W) -> Result<()> {
     execute!(
-        out,
-        style::ResetColor,
-        terminal::Clear(ClearType::All),
-        terminal::LeaveAlternateScreen,
+        stdout,
+        terminal::EnterAlternateScreen,
+        terminal::Clear(terminal::ClearType::All)
     )?;
+
+    let mut app = App::new()?;
+    app.view(&mut stdout)?;
+    stdout.flush()?;
+
+    loop {
+        queue!(stdout, terminal::Clear(terminal::ClearType::All))?;
+
+        if poll(Duration::from_millis(250))? {
+            let event = read()?;
+            if let Event::Key(KeyEvent { code, .. }) = event {
+                match code {
+                    KeyCode::Esc => break,
+                    _ => app.update(event),
+                }
+            }
+        }
+
+        if app.input_buffer.len() > app.prompt.len() {
+            app.input_buffer.clear();
+            app.prompt.next_lines()
+        }
+
+        app.view(&mut stdout)?;
+
+        let cursor_pos_x = app.prompt.section.x + (app.input_buffer.len()) as u16;
+        let cursor_pos_y = app.prompt.section.y;
+        queue!(stdout, cursor::MoveTo(cursor_pos_x, cursor_pos_y))?;
+
+        stdout.flush()?;
+    }
+
+    execute!(
+        stdout,
+        terminal::LeaveAlternateScreen,
+        terminal::Clear(terminal::ClearType::All)
+    )?;
+
     terminal::disable_raw_mode()?;
 
     Ok(())
 }
 
-fn main() -> Result<()> {
-    let mut stdout = io::stdout();
-    setup(&mut stdout)?;
-
-    let mut input_buffer = String::new();
-
-    let wordlist = {
-        let mut wordlist = get_wordlist()?;
-        wordlist.shuffle(&mut thread_rng());
-        wordlist
-    };
-
-    let mut word_chunks = wordlist
-        .chunks(15)
-        .map(|c| c.join(" "))
-        .collect::<Vec<String>>();
-
-    let mut current_chunk = word_chunks.pop().expect("No chunk of words available.");
-
-    let mut last_tick = Instant::now();
-    loop {
-        draw_ui(&mut stdout, &current_chunk, &input_buffer)?;
-
-        let timeout = TICK_RATE
-            .checked_sub(last_tick.elapsed())
-            .unwrap_or_else(|| Duration::from_secs(0));
-
-        if event::poll(timeout)? {
-            if let Event::Key(KeyEvent { code, .. }) = event::read()? {
-                match code {
-                    KeyCode::Backspace => {
-                        input_buffer.pop();
-                    }
-                    KeyCode::Char(c) => {
-                        input_buffer.push(c);
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-        }
-
-        if input_buffer.len() == current_chunk.len() {
-            let next_chunk = word_chunks.pop();
-            if next_chunk.is_none() {
-                break;
-            }
-            current_chunk = next_chunk.unwrap();
-            input_buffer.clear();
-        }
-
-        if last_tick.elapsed() >= TICK_RATE {
-            // on_tick()?;
-            last_tick = Instant::now();
-        }
+fn main() {
+    match run() {
+        Ok(()) => println!("Exited successfully"),
+        Err(what) => println!("{:?}", what),
     }
-
-    clean_up(&mut stdout)?;
-
-    Ok(())
 }
