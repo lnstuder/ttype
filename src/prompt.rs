@@ -1,5 +1,8 @@
-use crate::{input::Input, ui::Section};
-use crossterm::style::Color;
+use crate::ui::Section;
+use crossterm::{
+    event::{Event, KeyCode},
+    style::Color,
+};
 use std::{collections::VecDeque, fs::read_to_string};
 
 const WORDLIST_PATH: &str = "./wordlist.txt";
@@ -35,27 +38,27 @@ impl Prompt {
         self.prompt = self.wordlist.pop_front().unwrap().join(" ");
     }
 
-    pub fn input_correct(&self, input_buffer: &Vec<Input>) -> bool {
-        for (idx, chr) in self.prompt.chars().enumerate() {
-            let input_char = input_buffer.get(idx);
-            if let Some(input) = &input_char {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn prompt(&mut self, input_buffer: &Vec<Input>) -> Vec<(char, Color)> {
+    pub fn prompt(&mut self, input_buffer: &Vec<KeyCode>) -> Vec<(char, Color)> {
         let mut prompt: Vec<(char, Color)> = Vec::new();
 
         for (idx, chr) in self.prompt.chars().enumerate() {
-            let mut char_color = Color::Grey;
-            let input_char = input_buffer.get(idx);
-            if let Some(input) = &input_char {
-                char_color = input.output_color(chr);
+            let input_key = input_buffer.get(idx);
+
+            if input_key.is_none() {
+                prompt.push((chr, Color::Grey));
+                continue;
             }
 
-            prompt.push((chr, char_color));
+            let input_key = input_key.unwrap();
+            match *input_key {
+                KeyCode::Char(c) => {
+                    prompt.push((c, if c == chr { Color::Green } else { Color::Red }));
+                }
+                KeyCode::Backspace => {
+                    prompt.pop();
+                }
+                _ => (),
+            };
         }
 
         prompt

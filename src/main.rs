@@ -1,4 +1,3 @@
-mod input;
 mod prompt;
 mod stats;
 mod ui;
@@ -9,9 +8,8 @@ use crossterm::{
     event::{poll, read, Event, KeyCode, KeyEvent},
     execute, queue, terminal,
 };
-use input::Input;
 use prompt::Prompt;
-use stats::EntryType;
+// use stats::EntryType;
 use std::io::{stdout, Write};
 use std::time::Duration;
 
@@ -19,8 +17,7 @@ struct App {
     dimenions: (u16, u16),
     stats: Stats,
     prompt: Prompt,
-    input_buffer: Vec<Input>,
-    last_event: Option<Event>,
+    input_buffer: Vec<KeyCode>,
 }
 
 impl App {
@@ -38,7 +35,6 @@ impl App {
             stats,
             prompt,
             input_buffer,
-            last_event: None,
         };
         Ok(app)
     }
@@ -50,32 +46,10 @@ impl App {
                 self.dimenions.1 = height;
             }
             Event::Key(KeyEvent { code, .. }) => {
-                if let KeyCode::Char(c) = code {
-                    let input = Input::new(c);
-                    self.input_buffer.push(input);
-
-                    if let Some(Event::Key(KeyEvent { code, .. })) = self.last_event {
-                        match code {
-                            KeyCode::Char(_) => {
-                                self.stats.entries.push(EntryType::Entry);
-                                if !self.prompt.input_correct(&self.input_buffer) {
-                                    self.stats.entries.push(EntryType::Mistake)
-                                }
-                            }
-                            KeyCode::Backspace => {
-                                self.stats.entries.push(EntryType::CorrectedMistake)
-                            }
-                            _ => (),
-                        }
-                    }
-                } else if let KeyCode::Backspace = code {
-                    self.input_buffer.pop();
-                }
+                self.input_buffer.push(code);
             }
             _ => (),
         };
-
-        self.last_event = Some(event.clone());
     }
 
     pub fn view<T: Write>(&mut self, out: &mut T) -> anyhow::Result<()> {
@@ -87,6 +61,18 @@ impl App {
         self.prompt.draw(out, &self.input_buffer)?;
 
         Ok(())
+    }
+
+    pub fn input_char_count(&self) -> usize {
+        self.input_buffer.iter().fold(0, |acc, next| {
+            if let KeyCode::Char(_) = next {
+                acc + 1
+            } else if let KeyCode::Backspace = next {
+                acc - 1
+            } else {
+                acc
+            }
+        })
     }
 }
 
@@ -121,14 +107,14 @@ fn run() -> anyhow::Result<()> {
             }
         }
 
-        if app.input_buffer.len() > app.prompt.len() {
+        if app.input_char_count() > app.prompt.len() {
             app.input_buffer.clear();
             app.prompt.next_lines()
         }
 
         app.view(&mut stdout)?;
 
-        let cursor_pos_x = app.prompt.section.x + (app.input_buffer.len()) as u16;
+        let cursor_pos_x = app.prompt.section.x + (app.input_char_count()) as u16;
         let cursor_pos_y = app.prompt.section.y;
         queue!(stdout, cursor::MoveTo(cursor_pos_x, cursor_pos_y))?;
 

@@ -1,8 +1,5 @@
-use std::time::Instant;
-
-use crossterm::event::{Event, KeyCode};
-
 use crate::ui::Section;
+use std::time::Instant;
 
 #[derive(Debug)]
 pub enum EntryType {
@@ -13,8 +10,6 @@ pub enum EntryType {
 
 pub struct Stats {
     pub section: Section,
-    pub input_log: Vec<KeyCode>,
-    pub entries: Vec<EntryType>,
     start_time: Instant,
 }
 
@@ -22,8 +17,6 @@ impl Default for Stats {
     fn default() -> Self {
         Self {
             section: Section::default(),
-            input_log: Vec::new(),
-            entries: Vec::new(),
             start_time: Instant::now(),
         }
     }

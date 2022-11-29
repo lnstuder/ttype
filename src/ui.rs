@@ -1,6 +1,6 @@
-use crate::input::Input;
 use crate::prompt::Prompt;
 use crate::stats::Stats;
+use crossterm::event::KeyCode;
 use crossterm::queue;
 use crossterm::{
     cursor,
@@ -17,14 +17,13 @@ pub struct Section {
 impl Stats {
     pub fn draw<T: Write>(&self, out: &mut T) -> anyhow::Result<()> {
         let (pos_x, pos_y) = (self.section.x, self.section.y);
-        let stats = format!("{:?}", self.entries);
 
         queue!(
             out,
             cursor::MoveTo(pos_x, pos_y),
             style::Print("Statistics:"),
             cursor::MoveToNextLine(1),
-            style::Print(stats)
+            // style::Print(stats)
         )?;
 
         Ok(())
@@ -32,7 +31,11 @@ impl Stats {
 }
 
 impl Prompt {
-    pub fn draw<T: Write>(&mut self, out: &mut T, input_buffer: &Vec<Input>) -> anyhow::Result<()> {
+    pub fn draw<T: Write>(
+        &mut self,
+        out: &mut T,
+        input_buffer: &Vec<KeyCode>,
+    ) -> anyhow::Result<()> {
         let (pos_x, pos_y) = (self.section.x, self.section.y);
         let prompt = self.prompt(input_buffer);
 
