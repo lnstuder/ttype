@@ -1,83 +1,105 @@
 mod prompt;
-mod stats;
-mod ui;
 
-use crate::stats::Stats;
 use crossterm::{
-    cursor,
     event::{poll, read, Event, KeyCode, KeyEvent},
-    execute, queue, terminal,
+    execute, queue, terminal, cursor, style::{self, Stylize}
 };
 use prompt::Prompt;
-// use stats::EntryType;
-use std::io::{stdout, Write};
+use std::{io::{stdout, Write}, collections::VecDeque};
 use std::time::Duration;
 
 struct App {
-    dimenions: (u16, u16),
-    stats: Stats,
+    dimensions: (u16, u16),
     prompt: Prompt,
-    input_buffer: Vec<KeyCode>,
+    input_buffer: VecDeque<char>,
+    hidden_input_buffer: VecDeque<char>,
+    cursor_position: (u16, u16)
 }
 
 impl App {
-    pub fn new() -> anyhow::Result<Self> {
-        let (width, height) = terminal::size()?;
+    pub fn new(width: u16, height: u16) -> anyhow::Result<Self> {
+        let prompt = Prompt::default();
 
-        let stats = Stats::default();
-        let mut prompt = Prompt::default();
-        prompt.next_lines();
-
-        let input_buffer = Vec::new();
+        let input_buffer = VecDeque::new();
 
         let app = App {
-            dimenions: (width, height),
-            stats,
-            prompt,
+            dimensions: (width, height),
             input_buffer,
+            hidden_input_buffer: VecDeque::new(),
+            prompt,
+            cursor_position: (0, 0)
         };
         Ok(app)
     }
 
     pub fn update(&mut self, event: Event) {
+
         match event {
             Event::Resize(width, height) => {
-                self.dimenions.0 = width;
-                self.dimenions.1 = height;
+                self.dimensions.0 = width;
+                self.dimensions.1 = height;
             }
+
             Event::Key(KeyEvent { code, .. }) => {
-                self.input_buffer.push(code);
+                if let KeyCode::Char(c) = code {
+                    self.input_buffer.push_back(c);
+
+                    if cursor::position().unwrap().0 > self.cursor_position.0 + 15 {
+                        self.prompt.shift_forward();
+                        if let Some(invisible) = self.input_buffer.pop_front() {
+                            self.hidden_input_buffer.push_back(invisible);
+                        }
+                    }
+                }
+
+                if let KeyCode::Backspace = code {
+                    self.input_buffer.pop_back().unwrap();
+
+                    if cursor::position().unwrap().0 > self.cursor_position.0 + 15 {
+                        self.prompt.shift_back();
+                        if let Some(visible) = self.hidden_input_buffer.pop_back() {
+                            self.input_buffer.push_front(visible);
+                        }
+                    }
+                }
             }
             _ => (),
         };
     }
 
-    pub fn view<T: Write>(&mut self, out: &mut T) -> anyhow::Result<()> {
-        let (width, height) = terminal::size()?;
-        self.prompt.section.x = width / 2 - self.prompt.len() as u16 / 2;
-        self.prompt.section.y = height / 2;
+    fn reset_cursor<T: Write>(&mut self, out: &mut T) -> anyhow::Result<()> {
+        let cursor_x = self.dimensions.0 / 2u16 - self.prompt.len() / 2;
+        let cursor_y = self.dimensions.1 / 2u16;
 
-        self.stats.draw(out)?;
-        self.prompt.draw(out, &self.input_buffer)?;
+        self.cursor_position = (cursor_x, cursor_y);
+
+        queue!(out, cursor::MoveTo(cursor_x, cursor_y))?;
 
         Ok(())
     }
 
-    pub fn input_char_count(&self) -> usize {
-        self.input_buffer.iter().fold(0, |acc, next| {
-            if let KeyCode::Char(_) = next {
-                acc + 1
-            } else if let KeyCode::Backspace = next {
-                acc - 1
-            } else {
-                acc
-            }
-        })
-    }
-}
+    pub fn draw<T: Write>(&mut self, out: &mut T) -> anyhow::Result<()> {
+        self.reset_cursor(out)?;
 
-impl Drop for App {
-    fn drop(&mut self) {}
+        let display_text = self.prompt.displayed_prompt();
+        let displayed_chars = display_text.chars()
+            .collect::<Vec<char>>();
+
+        queue!(out, style::PrintStyledContent(display_text.grey()))?;
+        self.reset_cursor(out)?;
+
+        for (idx, chr) in self.input_buffer.iter().enumerate() {
+            let correct_char = *displayed_chars.get(idx).unwrap();
+
+            if correct_char == *chr {
+                queue!(out, style::PrintStyledContent(correct_char.green()))?;
+            } else {
+                queue!(out, style::PrintStyledContent(correct_char.red()))?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn run() -> anyhow::Result<()> {
@@ -90,33 +112,24 @@ fn run() -> anyhow::Result<()> {
         terminal::Clear(terminal::ClearType::All)
     )?;
 
-    let mut app = App::new()?;
-    app.view(&mut stdout)?;
-    stdout.flush()?;
+    let (width, height) = terminal::size()?;
+
+    let mut app = App::new(width, height)?;
 
     loop {
-        queue!(stdout, terminal::Clear(terminal::ClearType::All))?;
-
-        if poll(Duration::from_millis(250))? {
+        if poll(Duration::from_millis(500))? {
             let event = read()?;
             if let Event::Key(KeyEvent { code, .. }) = event {
                 match code {
                     KeyCode::Esc => break,
-                    _ => app.update(event),
+                    _ => {
+                        app.update(event);
+                    },
                 }
             }
         }
 
-        if app.input_char_count() > app.prompt.len() {
-            app.input_buffer.clear();
-            app.prompt.next_lines()
-        }
-
-        app.view(&mut stdout)?;
-
-        let cursor_pos_x = app.prompt.section.x + (app.input_char_count()) as u16;
-        let cursor_pos_y = app.prompt.section.y;
-        queue!(stdout, cursor::MoveTo(cursor_pos_x, cursor_pos_y))?;
+        app.draw(&mut stdout)?;
 
         stdout.flush()?;
     }
