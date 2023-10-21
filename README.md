@@ -5,7 +5,7 @@ ttype is a minimal typing test, inspired by monkeytype and [ttt by p-ranav](http
 ## Install
 
 ```sh
-cargo install ttype
+cargo install ttype-app
 ```
 
 ## Usage
