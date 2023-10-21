@@ -10,4 +10,4 @@ cargo install ttype-app
 
 ## Usage
 
-Open the terminal, run `ttype` and start typing. Press `Esc` to quit.
+Open the terminal, run `ttype-app` and start typing. Press `Esc` to quit.
