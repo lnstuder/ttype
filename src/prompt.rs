@@ -1,6 +1,4 @@
-use std::{collections::VecDeque, fs::read_to_string};
-
-const WORDLIST_PATH: &str = "./wordlist.txt";
+use std::collections::VecDeque;
 
 pub struct Prompt {
     prompt_buffer: VecDeque<char>,
@@ -10,7 +8,7 @@ pub struct Prompt {
 
 impl Default for Prompt {
     fn default() -> Self {
-        let wordlist = read_to_string(WORDLIST_PATH).unwrap();
+        let wordlist = include_str!("wordlist.txt");
 
         let words = wordlist
             .split("\n")
@@ -41,7 +39,11 @@ impl Prompt {
     }
 
     pub fn displayed_prompt(&self) -> String {
-        self.prompt_buffer.clone().range(self.offset..(self.offset + self.displayed_length)).copied().collect()
+        self.prompt_buffer
+            .clone()
+            .range(self.offset..(self.offset + self.displayed_length))
+            .copied()
+            .collect()
     }
 
     pub fn len(&self) -> u16 {
